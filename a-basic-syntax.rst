@@ -59,6 +59,13 @@
     'A' "d"
     'ABC' 'X' "Good night, Gracie" 'Say "Good night," Gracie'
 
+标识符
+-------
+
+标识符可以定义变量、常量、过程、或代码标签。标识符可以包含 1 到 247 个字符，大小写不敏
+感，第一个字符必须是字母、下划线、@、?、$，后续字符还可以是数字，标识符不能与汇编器的保
+留字相同。因为 @ 符号用于汇编器预定义符号的前缀，因此避免使用该符号。
+
 保留字
 ------
 
@@ -69,14 +76,77 @@
 5. 操作符
 6. 预定义符号，例如 @data
 
-完整的列表见附录 A。
+保留字包括类型标识符以及： ::
 
-标识符
--------
+    BASIC C FAR FAR16 FORTRAN NEAR NEAR16 PASCAL STDCALL SYSCALL VARARG
 
-标识符可以定义变量、常量、过程、或代码标签。标识符可以包含 1 到 247 个字符，大小写不敏
-感，第一个字符必须是字母、下划线、@、?、$，后续字符还可以是数字，标识符不能与汇编器的保
-留字相同。因为 @ 符号用于汇编器预定义符号的前缀，因此避免使用该符号。
+寄存器名称包括： ::
+
+    AH AL AX BH BL BP BX CH CL CR0 CR2 CR3 CS CX DH DI DL DR0 DR1
+    DR2 DR3 DR6 DR7 DS DX EAX EBP EBX ECX EDI EDX ES ESI ESP FS GS
+    SI SP SS ST TR3 TR4 TR5 TR6 TR7
+
+预定义符号包括：
+
+**$**
+    当前地址位置计数器的值。
+**?**
+    用于数据声明，表示数据分配但未初始化。
+**@@:**
+    定义仅在 label1 和 lable2 之间可见的代码标签，lable1 是代码段的开始或者前一个 @@:
+    标签，label2 是代码段的结束或者下一个 @@: 标签。见 @B 和 @F。
+**@B**
+    前一个 @@: 标签的地址位置。
+**@F**
+    下一个 @@: 标签的地址位置。
+**@CatStr(string1{, string2})**
+    行函数用于拼接一个或多个字符串，返回一个字符串结果。
+**@code**
+    文本宏，代码段的名称。
+**@CodeSize**
+    TINY、SMALL、COMPACT、FLAT 模型是 0，MEDIUM、LARGE、HUGE 模型是 1。
+**@Cpu**
+    一个比特掩码指定处理器模式。
+**@CurSeg**
+    文本宏，当前分段的名称。
+**@data**
+    默认数据组的名称，在 FLAT 内存模型下展开为 FLAT，在其他内存模型下展开为 DGROUP，是
+    一个文本宏。
+**@DataSize**
+    TINY、SMALL、MEDIUM、FLAT 模型是 0，COMPACT、LARGE 模型是 1，HUGE 模型是 2。
+**@Date**
+    文本宏，mm/dd/yy 格式的系统时间。
+**@Environ(envvar)**
+    宏函数，环境变量 envvar 的值。
+**@fardata**
+    文本宏，.FARDATA 汇编命令定义的分段名称。
+**@fardata?**
+    文本宏，.FARDATA? 汇编命令定义的分段名称。
+**@FileCur**
+    文本宏，当前文件名称。
+**@FileName**
+    文本宏，被汇编的主文件的 base 名称。
+**@InStr([position,] string1, string2)**
+    宏函数，在 string1 中的位置 position 开始查找 string2，返回找到的位置或者没有找到
+    返回 0。
+**@Interface**
+    语言参数的信息。
+**@Line**
+    当前文件的源文件行号。
+**@Model**
+    TINY 内存模式 1，SMALL 2，COMPACT 3，MEDIUM 4，LARGE 5，HUGE 6，FLAT 7。
+**@SizeStr(string)**
+    宏函数，返回字符串的长度。
+**@stack**
+    文本宏，near stacks 是 DGROUP，far stacks 是 STACK。
+**@SubStr(string, position [, length])**
+    宏函数，返回从 string 位置 position 开始的，对应长度的子字符串。
+**@Time**
+    文本宏，hh:mm:ss 形式的 24 小时格式的系统时间。
+**@Version**
+    文本宏，MASM 的版本号，整数。
+**@WordSize**
+    16为分段是 2，32为分段是 4。
 
 汇编命令
 --------
@@ -412,10 +482,94 @@ TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何�
     SETAL TEXTEQU <MOVE al,COUNT>
     SETAL   ; 被展开成 mov al,10
 
-预定义符号
------------
-
-
 汇编操作符
 ----------
 
+::
+
+    expr + expr     加法
+    expr - expr     减法
+    -expr           取负
+    expr * expr     乘法
+    expr / expr     除法
+    expr1 [expr1]   返回 expr1 + [expr2]
+    segment: expr   将 expr 的默认段修改为 segment，segment 可以是一个段寄存器，group
+                    名称，分段名称，或分段表达式；expr 必须是常量。
+    expr.field.field...
+                    返回 expr 加上 field 的结构体内偏移
+    [register].field...
+                    返回寄存器指向位置加上 field 的结构体内偏移
+    <text>          将 text 当成单个字面量元素
+    "text"          字符串
+    'text'          字符串
+    !char           将 char 当成字符字面量而不是一个操作符或符号
+    ;text           注释
+    ;;text          宏定义内的注释
+    %expr           在宏实参中将 expr 的值当成文本
+    &parameter&     将 parameter 替换成它对应的实参的值
+    ABS             见 EXTERNDEF 汇编命令
+    ADDR            见 INVOKE 汇编命令
+    expr AND expr   位与
+    count DUP(initvalue,...)
+                    重复声明数据
+    expr EQ expr    如果相等返回 -1，不相等返回 0
+    expr GE expr    大于等于返回 -1，否则返回 0
+    expr GT expr    大于返回 -1，否则返回 0
+    HIGH expr       低16位的高8位的值，MASM 表达式是64位值
+    HIGH32 expr     高32位的值，MASM 表达式是64位值
+    HIGHWORD expr   低32位的高16位值
+    IMAGEREL expr   表达式的映像相对偏移，仅生成 COFF 对象文件时可用
+    expr LE expr    小于等于返回 -1，否则返回 0
+    LENGTH variable 数据长度
+    LENGTHOF var    数据对象个数
+    LOW expr        低8位的值
+    LOW32 expr      低32位的值
+    LOWWORD expr    低16位的值
+    LROFFSET expr   表达式的偏移，与 OFFSET 类似，但生成的是一个加载器解析的偏移，允许
+                    Windows 重定位代码段
+    expr LT expr    小于返回 -1，否则返回 0
+    MASK record/recordfieldname
+                    返回比特位掩码，将 record 或 recordfieldname 位置位，其他所有位
+                    清零，之后的位掩码
+    expr MOD expr   取余
+    expr NE expr    不相等返回 -1，否则返回 0
+    NOT expr        所有比特位取反
+    OFFSET expr     表达式的相对分段的偏移
+    OPATTR expr     表达式的模式和作用域，低字节的值与 .TYPE 对应的值一样，高字节包含
+                    额外的信息
+    expr OR expr    位或
+    type PTR expr   将 expr 当作类型 type
+    [distance] PTR type
+                    指定一个指针到类型 type
+    SEG expr        返回表达式的段
+    expr SHL count  左移
+    .TYPE expr      见 OPATTR
+    SECTIONREL expr 返回表达式的分区相对偏移，仅当生成 COFF 目标文件时可用
+    SHORT label     将 label 的类型设为 short，所有跳转到 label 的值都必须时 short，
+                    即在 -128 到 127 个字节范围内
+    expr SHR count  右移
+    SIZE var        数据的字节数
+    SIZEOF var/type 数据或类型的字节数
+    THIS type       返回指定类型 type 的一个操作数
+    TYPE expr       返回表达式的类型
+    WIDTH record/recordfieldname
+                    当前的 record 或 recordfieldname 的比特位宽度
+    expr XOR expr   位异或
+
+运行时操作符： ::
+
+    expr == expr    相等，仅用于 .IF .WHILE .REPEAT 块，在运行时求值，而不是汇编时
+    expr != expr    不等
+    expr > expr     大于
+    expr >= expr    大于等于
+    expr < expr     小于
+    expr <= expr    小于等于
+    expr || expr    逻辑或
+    expr && expr    逻辑与
+    expr & expr     位与
+    !expr           逻辑非
+    CARRY?          进位的状态
+    OVERFLOW?       溢出的状态
+    PARITY?         奇偶位的状态
+    SIGN?           符号位的状态
+    ZERO?           零位的状态
