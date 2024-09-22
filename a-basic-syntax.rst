@@ -49,6 +49,10 @@
     +3.0
     -44.2E+05
     26.E5
+
+编码的实数，是用32位十六进制整数表示的对应编码的单精度浮点。例如 +1.0 的二进制表示为：
+0011 1111 1000 0000 0000 0000 0000 0000，可以用如下的编码的实数表示： ::
+
     3F800000r
 
 字符和字符串
@@ -64,7 +68,10 @@
 
 标识符可以定义变量、常量、过程、或代码标签。标识符可以包含 1 到 247 个字符，大小写不敏
 感，第一个字符必须是字母、下划线、@、?、$，后续字符还可以是数字，标识符不能与汇编器的保
-留字相同。因为 @ 符号用于汇编器预定义符号的前缀，因此避免使用该符号。
+留字相同。一般应该避免使用 @ 以及下划线开头的标识符，因为它们是被汇编器和高级语言保留使
+用的标识符前缀。
+
+可以使用 -Cp 命令行选项使得所有关键字和标识符是大小写敏感的。
 
 保留字
 ------
@@ -159,8 +166,8 @@
     MyVar   DWORD 26
     mov     eax, MyVar
 
-汇编命令的另外一个重要用途是定义段，.data 指定包含变量的程序区域，.text 指定包含程序指
-令的分区，.stack 指定程序栈分区。附录 A 包含汇编命令和操作的参考。
+汇编命令的另外一个重要用途是定义段或分区，.data 指定包含变量的程序区域，.text 指定包含
+程序指令的分区，.stack 可以指定程序栈分区的字节大小。
 
 指令
 -----
@@ -192,12 +199,11 @@
         ...
         jmp target
 
-代码标签可以与指令共用同一行，也可以单独一行： ::
+可以在一个程序中多次使用一个相同的代码标签，只要这个标签在当前封闭的过程内部是唯一的。代
+码标签可以与指令共用同一行，也可以单独一行： ::
 
     L1: mov ax, bx
     L2:
-
-只要每个标签在其封闭的过程内是唯一的，就可以在程序中多次使用相同的代码标签。
 
 您可以为一些指令添加前缀关键字，这些关键字设置了指令编码的选项。REP、REPE、REPZ、REPNE
 和 REPNZ 关键字与字符串指令一起使用，以在单个指令中执行 memcpy 或 strlen 类型的操作。
@@ -255,8 +261,8 @@ Suppression）。
 - sae：抑制所有异常（不需要舍入）
 
 汇编语言指令可以有零到三个操作数，每个操作数可以是一个寄存器、内存操作数、常量表达式、或
-者输入输出端口。一个内存操作数是一个变量的名称，或者包含变量地址的寄存器。一个变量名称隐
-含的是变量的地址，告诉汇编器引用给定地址中的内存内容。
+者输入输出端口。一个内存操作数实际上引用的是一个内存位置的地址，因此内存操作数可以用一个
+变量的名称，或者包括在方括号内的寄存器表示。一个变量名称隐含的就是数据的地址。
 
 每个指令只允许某些类型的操作数，除 MOVS 和 CMPS 指令外，只有一个操作数可以是内存引用，
 所有其他操作数都必须是寄存器引用或常量。
@@ -301,71 +307,42 @@ x86 处理器被设计为能够更快地从偶数双字地址加载代码和数�
 当然，在整个程序中提供注释是很重要的，特别是在代码的意图不明显的地方。这有助于其他程序员
 或未来的你自己理解代码的功能和结构，也便于调试和维护。
 
-
 代码示例
 ---------
 
-一个简单的汇编程序代码： ::
+一个简单的32位汇编程序代码： ::
 
-    TITLE Add and Subtract (AddSub.asm)
-    ; This program adds and subtracts 32-bit integers.
-    INCLUDE Irvine32.inc
-    .code
+    TITLE Adds Two 32-bit Intergers (AddTwo.asm)
+    .386
+    .MODEL FLAT,STDCALL
+    .STACK 4096
+    ExitProcess PROTO,exitcode:DWORD
+
+    .DATA
+    sum DWORD 0
+
+    .CODE
     main PROC
-        mov eax,10000h ; EAX = 10000h
-        add eax,40000h ; EAX = 50000h
-        sub eax,20000h ; EAX = 30000h
-        call DumpRegs ; display registers
-        exit
+        MOV EAX,5
+        ADD EAX,6
+        MOV sum,EAX
+
+        INVOKE ExitProcess,0
     main ENDP
     END main
 
 TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何东西。以分号开始到行结束的内容会被
 汇编器忽略，可以用作注释。INCLUDE 汇编命令用来包含另一个文件的内容。.code 表明代码段的
 开始。PROC 汇编命令表示一个过程的开始，这里过程的名称为 main。后面都是指令助记符以及用
-法。exit 语句间接的调用 MS-Windows 提供的退出函数来终止程序。ENDP 汇编命令用来结束 main
-过程。注意 exit 不是一个 MASM 关键字，而是在 Irvine32.inc 中定义的宏。END 汇编命令表示
-程序汇编的最后一行，并且它指定了该程序的入口点。 ::
+法。ExitProcess 是 Windows 提供的退出函数，用来终止程序。ENDP 汇编命令用来结束 main
+过程。
 
-    TITLE Add and Subtract (AddSubAlt.asm)
-    ; This program adds and subtracts 32-bit integers.
-    .386
-    .model flat,stdcall
-    .stack 4096
-    ExitProcess PROTO, dwExitCode:DWORD
-    DumpRegs PROTO
-    .code
-    main PROC
-        mov eax,10000h ; EAX = 10000h
-        add eax,40000h ; EAX = 50000h
-        sub eax,20000h ; EAX = 30000h
-        call DumpRegs
-        INVOKE ExitProcess,0
-    main ENDP
-    END main
+汇编命令 .CODE 标记程序代码区的开始，该分区包含可执行指令。一般情况下，在 .CODE 的下一
+行就是程序入口点的声明，并且通常这个入口点程序名为 main。程序入口点是程序执行时最先执行
+的第一条指令的位置。
 
-程序模板
----------
-
-::
-
-    TITLE Program Template (Template.asm)
-    ; Program Description:
-    ; Author:
-    ; Creation Date:
-    ; Revisions:
-    ; Date:
-
-    INCLUDE Irvine32.inc
-    .data
-        ; (insert variables here)
-    .code
-    main PROC
-        ; (insert executable instructions here)
-        exit
-    main ENDP
-        ; (insert additional procedures here)
-    END main
+最后，END 汇编命令表示程序的结束，并且还可以指定程序的入口点。可以在 END 之后添加更多的
+程序行，但是这些都会被汇编器忽略，因此可以在这里添加任何东西。
 
 定义数据
 ---------
@@ -417,12 +394,33 @@ TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何�
     rval2 REAL8 3.2E-260
     rarr  REAL4 20 DUP(0.0)
 
-定义变量的偏移： ::
+定义一个变量包含另一个变量的32位地址偏移： ::
 
     val1 DWORD 12345678h
     val2 SDWORD -2147483648
     val3 DWORD 20 DUP(?)
     pval DWORD val3
+
+可以使用 TBYTE 定义打包的 BCD（binary coded decimal）数据，打包的 BCD 数据用一个字节
+表示一个两位的十进制数，除了最高字节。其中低 9 字节，每半个字节都表示单个十进制数字，最
+高字节表示符号，80h 表示负数，00h 表示整数。因此 TBYTE 可表示的整数范围是： ::
+
+    -999,999,999,999,999,999 ~
+    +999,999,999,999,999,999
+
+定义 TBYTE 数据时，必须使用十六进制，因为 MASM 默认将常量解析为二进制整数，而不是 BCD
+整数。 ::
+
+    intval TBYTE 8000000000000000001234h    ; 合法
+    intval TBYTE -1234                      ; 非法
+
+汇编命令 .data? 用来声明未初始化数据分区，比起放入 .data 分区的未初始化数据，.data? 可
+以大量减少初始化阶段指令的大小。 ::
+
+    .data
+    small DWORD 10 DUP(0)
+    .data?  ; 如果不使用会产生20000字节编译后的程序
+    big   DWORD 5000 DUP(?)
 
 符号常量
 ---------
@@ -573,3 +571,25 @@ TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何�
     PARITY?         奇偶位的状态
     SIGN?           符号位的状态
     ZERO?           零位的状态
+
+64位汇编程序
+-------------
+
+64位汇编器不支持 .386 .MODEL .STACK 等汇编命令，也不支持 INVOKE，PROTO 不能带参数，END
+不能指定程序入口。 ::
+
+    TITLE Adds Two Intergers in 64-bit MASM
+    ExitProcess PROTO
+
+    .data
+    sum DWORD 0
+
+    .code
+    main PROC
+        mov eax,5
+        add eax,6
+        mov sum,eax
+        mov ecx,0
+        call ExitProcess
+    main ENDP
+    END
