@@ -49,7 +49,8 @@
 **YMMWORD**
     类型名，用于 AVX 指令的256位操作数，相当于 __m256。
 
-处理器：
+处理器
+-------
 
 **.386**
     仅32位MASM可用，启用 80386 处理器非特权指令，禁用所有后续版本引入的指令。同时也启用
@@ -77,3 +78,183 @@
     仅32位MASM可用，启用 MMX 或 SIMD 指令。
 **.XMM**
     仅32位MASM可用，启用 Streaming SIMD Extension（SSE）指令。
+
+分段
+-----
+
+**.MODEL memory-model ⟦, language-type⟧ ⟦, stack-option⟧**
+    仅32位MASM可用，初始化程序的内存模型。memory-model 指定代码和数据指针的大小，32位
+    仅支持 FLAT，16位支持 TINY、SMALL、COMPACT、MEDIUM、LARGE、HUGE、FLAT。language-type
+    指定调用和命名约定，32位仅支持 C 和 STDCALL，16位支持 C、BASIC、FORTRAN、PASCAL、
+    SYSCALL、STDCALL。stack-option 仅16位可用，可以是 NEARSTACK、FARSTACK。
+**.DOSSEG**
+    仅32位MASM可用，根据 MS-DOS 分段约定对分段排序，代码段第一，然后是不在 DGROUP 中的
+    段，然后是 DGROUP 中的段。DGROUP 中的顺序为，不是 BSS 或 STACK 的段，然后是 BSS
+    段，最后是 STACK 段。
+**.STARTUP**
+    仅32位MASM可用，生成程序起始代码。
+**.EXIT ⟦expr⟧**
+    仅32位MASM可用，生成程序结束代码，返回 expr。
+**.STACK ⟦size⟧**
+    仅32位MASM可用，定义程序栈段，同时可以设置栈的字节大小，默认是 1024 个字节。.STACK
+    自动关闭结束 stack 语句。
+**.FARDATA ⟦name⟧**
+    仅32位MASM可用，远初始化数据段（FAR_DATA 或者 name）。
+**.FARDATA? ⟦name⟧**
+    仅32位MASM可用，远未初始化数据段（FAR_BSS 或者 name）。
+**.CODE ⟦name⟧**
+    代码段的开始，TINY、SMALL、COMPACT、FLAT 模型的默认代码段名称为 _TEXT，其他模型的
+    默认名称为 moduelname_TEXT。
+**.CONST**
+    只读常量数据段（名称为 CONST）。
+**.DATA**
+    初始化数据段（名称为 _DATA）。
+**.DATA?**
+    未初始化数据段（名称为 _BSS）。
+
+过程
+-----
+
+**name PROTO**
+    过程的原型声明，具体语法如下： ::
+
+        label PROTO ⟦distance⟧ ⟦language-type⟧ ⟦, parameter ⟦:tag⟧ ...⟧
+
+    属性 distance 仅32位MASM可用，用于16位内存模型，表示 NEAR 或 FAR 调用。属性 language-type
+    仅32位MASM可用，设置调用和命名约定，支持的约定有：
+
+    - 32 位 FLAT 模型：C、STDCALL
+    - 16 位内存模型：C、BASIC、FORTRAN、PASCAL、SYSCALL、STDCALL
+
+    属性 parameter 指定过程的参数，属性 tag 指定参数的类型。例如： ::
+
+        func PROTO NEAR C, args:WORD, arg1:VARARG
+
+**name PROC**
+    标记过程的开始，过程可以通过 CALL 指令或者 INVOKE 汇编命令调用。具体语法如下： ::
+
+        label PROC ⟦distance⟧ ⟦language-type⟧ ⟦PUBLIC|PRIVATE|EXPORT⟧ ⟦<prologuearg>⟧
+            ⟦USES reglist⟧ ⟦, parameter ⟦:tag⟧ ...⟧ ⟦FRAME ⟦:ehandler-address⟧⟧
+            statements
+        label ENDP
+
+    属性 ⟦distance⟧ 和 ⟦language-type⟧ 仅32位MASM可用。⟦FRAME ⟦:ehandler-address⟧⟧
+    仅64位MASM可用，会使汇编器在 .pdata 分区生成一个对应该过程的函数表条目，并在 .xdata
+    分区生成栈展开信息，这些内容用于函数的结构化异常处理的展开。当使用了 FRAME 属性，后
+    面必须跟随一个 .ENDPROLOG 汇编命令。例如： ::
+
+        _text SEGMENT
+        func PROC FRAME
+            push r10
+            .pushreg r10
+            push r15
+            .pushreg r15
+            push rbx
+            .pushreg rbx
+            push rsi
+            .pushreg rsi
+            .endprolog
+            ; rest of func ...
+            ret
+        func ENDP
+        _text ENDS
+        END
+
+**name ENDP**
+    标记过程的结束。
+
+**INVOKE expr ⟦, argument ...⟧**
+    仅32位MASM可用，每个参数可以是一个表达式、寄存器对、或一个地址表达式（使用 ADDR 开
+    头的表达式）
+
+x64 命令
+---------
+
+**.ALLOCSTACK size**
+    大小 size 必须是 8 的倍数。该汇编命令扩展了 PROC FRAME 声明，可以指定一个函数帧怎
+    样展开。仅用于 prologue 内部，会根据指定大小生成一个 UWOP_ALLOC_SMALL 或者一个
+    UWOP_ALLOC_LARGE。 ::
+
+        text SEGMENT
+        PUBLIC func
+        PUBLIC func_UW
+        func_UW PROC NEAR
+            ; exception/unwind handler body
+            ret 0
+        func_UW ENDP
+        func PROC FRAME: func_UW
+            sub rsp,16
+            .allocstack 16
+            .endprolog
+            ; function body
+            add rsp,16
+            ret 0
+        func ENDP
+        text ENDS
+        END
+
+**.ENDPROLOG**
+    标记 prologue 声明的结束，prologue 声明仅用于 PROC FRAME 和 .ENDPROLOG 之间。
+
+**.PUSHFRAME ⟦CODE⟧;;**
+    生成一个 UWOP_PUSH_MACHFRAME 展开代码条目，如果指定了 CODE 关键字，该条目给定修饰
+    符 1，否则修饰符为 0。该命令可以指定一个函数帧怎样展开，仅用于 prologue 内部。
+
+**.PUSHREG register**
+    生成一个 UWOP_PUSH_NONVOL 展开代码条目，该命令可以指定一个函数帧怎样展开，仅用于
+    prologue 内部。寄存器可以是 RAX、RCX、RDX、RBX、RDI、RSI、RBP、R8、R9、R10、R11、
+    R12、R13、R14、R15。以下示例展示了怎样压入非易变（non-volatile）寄存器： ::
+
+        _text SEGMENT
+        func PROC FRAME
+            push r10
+            .pushreg r10
+            push r15
+            .pushreg r15
+            push rbx
+            .pushreg rbx
+            push rsi
+            .pushreg rsi
+            .endprolog
+            ; rest of function ...
+            ret
+        func ENDP
+        _text ENDS
+        END
+
+**.SAVEREG reg, offset**
+    为指定寄存器和偏移生成一个 UWOP_SAVE_NONVOL 或者 UWOP_SAVE_NONVOL_FAR 展开代码条
+    目。该命令可以指定一个函数帧怎样展开，仅用于 prologue 内部。
+
+**.SAVEXMM128 xmmreg, offset**
+    为指定 XMM 寄存器和偏移生成 UWOP_SAVE_XMM128 或 UWOP_SAVE_XMM128_FAR 展开代码条
+    目。该命令可以指定一个函数帧怎样展开，仅用于 prologue 内部。offset 必须是 16 的倍
+    数。
+
+**.SETFRAME reg, offset**
+    生成 UWOP_SET_FPREG 展开代码条目，并填充展开信息中的帧寄存器字段和偏移。offset 必
+    须是 16 的倍数，并且小于等于 240。该命令可以指定一个函数帧怎样展开，仅用于 prologue
+    内部。以下示例展示了怎样使用帧指针： ::
+
+        .code
+        func PROC FRAME
+            push rbp
+            .pushreg rbp
+            sub rsp,010h
+            .allocstack 010h
+            mov rbp,rsp
+            .setframe rbp,0
+            .endprolog
+            ; modify the sp outside of the prologue (similar to alloca)
+            sub rsp,060h
+
+            ; we can unwind from the following AV because of the frame pointer
+            mov rax,0
+            mov rax,[rax] ; AV!
+
+            add rsp,060h
+            add rsp,010h
+            pop rbp
+            ret
+        func ENDP
+        END
