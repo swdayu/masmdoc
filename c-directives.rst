@@ -3,51 +3,98 @@
 
 **ALIAS**
     定义函数的一个别名，ALIAS <alias> = <actual-name>，尖括号是必须的。
+
 **ASSUME**
     开启对寄存器值的错误检查，仅32位MASM可用。
+
 **COMMENT**
     将分隔字符之间以及同行的文本当作注释，COMMENT delimeter ⟦text⟧ delimiter ⟦text⟧
+
 **ECHO message**
     将 message 显式到标准输出，与 %OUT 相同。
+
 **%OUT**
     见 ECHO。
+
 **END**
     标记一个模块的结束，32位MASM还可以可选的设置程序的入口点：END ⟦entry⟧。
+
 **.FPO(cdwLocals, cdwParams, cbProlog, cbRegs, fUseBP, cbFrame)**
     控制输出到 .debug$F 分段的调试记录的输出。
+
 **INCLUDE filename**
     包含一个文件，如果文件名包含反斜杠、分号、大于、小于、单引号、双引号，必须包含在尖括
     号内。
+
 **INCLUDELIB libraryname**
     通知链接器当前模块需要链接 libraryname 库，如果库名称包含以上特殊字符必须包含在尖括
     号内。
+
 **OPTION option-list**
     启用和禁用汇编器的特性，包括 CASEMAP、DOTNAME、NODOTNAME、EMULATOR、NOEMULATOR、
     EPILOGUE、EXPR16、EXPR32、LJMP、NOLJMP、M510、NOM510、NOKEYWORD、NOSIGNEXTEND、
     OFFSET、OLDMACROS、NOOLDMACROS、OLDSTRUCTS、NOOLDSTRUCTS、PROC、PROLOGUE、
     READONLY、NOREADONLY、SCOPED、NOSCOPED、SEGMENT、SETIF2。
+
+    OPTION PROC: PRIVATE 可以使所有的过程默认都是私有的。
+
 **OPTION LANGUAGE: language**
     设置语言特性比如调用约定，可用的 language 包括：C、STDCALL、BASIC、SYSCALL、PASCAL、
     FORTRAN。其中 BASIC、SYSCALL、PASCAL、FORTRAN 不能在 .MODEL FLAT 内存模型下使用。
+
 **OPTION AVXENCODING: preference**
     选择 AVX 指令的编码偏好，可用的 preference 包括：PREFER_FIRST、PREFER_VEX、
     PREFER_VEX3、PREFER_EVEX、NO_EVEX。
+
 **POPCONTEXT context**
     恢复当前的 context，context 可以是 ASSUMES（仅32位MASM）、RADIX、LISTING、CPU（
     仅32位MASM）、ALL。
+
 **PUSHCONTEXT**
     保存当前的 context。
+
 **.RADIX expr**
-    设置后续数值的基数，例如：.RADIX 8      mov ax, 173
+    设置后续数值的基数，例如： ::
+
+        .RADIX 8
+        mov ax, 173
+
 **.SAFESEH identifier**
     注册一个函数作为结构化异常处理函数，仅32位MASM可用。identifier 只能是本地定义的 PROC
     或 EXTRN PROC，不能是一个 LABEL。.SAFESEH 需要 ml.exe 使用 /safeseh 命令行选项。
+
 **MMWORD**
     类型名，qword 是一个64位无符号整型，而 mmword 相当于 __m64。
+
 **XMMWORD**
     类型名，用于 XMM 指令的128位操作数，相当于 __m128。
+
 **YMMWORD**
     类型名，用于 AVX 指令的256位操作数，相当于 __m256。
+
+**COMM definition, ...**
+    创建一个通用的变量，通用变量是由链接器分配的，并且不能初始化。这也意味着不能依赖这种
+    变量的位置和顺序。每个 definition 有以下形式： ::
+
+        ⟦language-type⟧ ⟦NEAR | FAR⟧ label:type⟦:count⟧
+
+    其中 language-type、NEAR、FAR 仅在 32 位 MASM 中合法。lable 是变量的名字，type
+    是类型或者一个整数表示变量的字节大小，count 声明多少个数据对象，默认是 1。例如创建
+    一个 512 个字节的通用数组变量： ::
+
+        COMM array:BYTE:512
+
+**EXTERN ⟦language-type⟧ name ⟦(altid)⟧ : type, ...**
+    定义一个或多个名称为 name 类型为 type 的外部变量、标签、或符号。类型可以是 ABS，表
+    示导入名为 name 的常量。language-type 仅在 32 位 MASM 中合法。
+
+**EXTERNDEF ⟦language-type⟧ name:type, ...**
+    如果 name 定义在模块中，相当于 PUBLIC；否则相当于 EXTERN。如果 name 没有被引用，会
+    忽略该 EXTERNDEF。
+
+**PUBLIC  ⟦language-type⟧ name, ...**
+    使每个指定名称的变量、标签、符号在所有模块中都可见。language-type 仅在 32 位 MASM
+    中合法。
 
 处理器
 -------
@@ -165,7 +212,7 @@
 
 **INVOKE expr ⟦, argument ...⟧**
     仅32位MASM可用，每个参数可以是一个表达式、寄存器对、或一个地址表达式（使用 ADDR 开
-    头的表达式）
+    头的表达式），ADDR 只能在 INVOKE 中使用，表示传地址，但地址必须是在编译时已知的
 
 x64 命令
 ---------
