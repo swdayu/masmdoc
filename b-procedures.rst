@@ -256,7 +256,7 @@ LOCAL 可以命令一些列局部变量。如果使用 LOCAL，它必须立即�
 6. 不推荐使用帧指针优化（通过 /Oy 编译器选项），但对于 naked 函数它是被自动禁止的。
 7. 不能在函数词法作用域内声明 C++ 类对象，但可以在嵌套的块中声明对象。
 8. 使用 /clr 编译时会忽略 naked 关键字。
-9. 对于 __fastcall naked 函数，如果在 C/C++ 代码中引用了寄存器参数，序言代码应该将该寄
+9. 对于 __fastcall naked 函数，如果在 C/C++ 代码中引用了寄存器参数，起始代码应该将该寄
    存器的值存储到该变量的栈位置。
 
 裸函数仅用于 x86 和 ARM，在 x64 上不可用。一个裸函数的示例如下： ::
@@ -1127,3 +1127,538 @@ space 和 RSP 对齐的要求。这里一个前提是，当前过程在进入时
 x64异常处理
 -----------
 
+展开数据用于异常处理和调试支持，相关的几个数据结构介绍如下。
+
+基于表的异常处理，每个需要分配栈或调用其他函数的函数都有一个表条目，其格式为： ::
+
+    struct RUNTIME_FUNCTION {
+        ULONG func_start_address;
+        ULONG func_end_address;
+        ULONG unwind_info_address;
+    };
+
+RUNTIME_FUNCTION 结构在内存中必须以 DWORD 对齐。所有地址都是映像相对的，即它们都是相对
+包含表条目的映像的起始地址开始的 32 位偏移。这些条目被排序，并放在 PE32+ 映像的 .pdata
+分区中。对于动态生成的函数（例如 JIT 编译器生成的函数），运行时必须使用
+RtlInstallFunctionTableCallback 或 RtlAddFunctionTable 来向操作系统提供这些信息以支
+持这些函数，不这样做将导致进程无法处理异常和调试。
+
+展开数据信息结构体用于记录函数如何使用栈指针，以及非易变寄存器保存的栈位置： ::
+
+    struct UNWIND_INFO {
+        UBYTE   version: 3; // 展开数据的版本号，目前是 1
+        UBYTE   flags: 5;   // 标志
+        UBYTE   size_of_prolog; // 函数起始代码的长度，以字节为单位
+        UBYTE   count_of_unwind_codes; // 展开代码数组的元素个数，例如 UWOP_SAVE_NONVOL 有多个元素
+        UBYTE   frame_register: 4;
+        UBYTE   frame_register_offset_scaled: 4;
+        USHORT  unwind_codes_array[count_of_unwind_codes];
+        union {
+            struct {
+                ULONG exception_handler_address;
+                ULONG lang_spec_hdr_data; // Optional
+            } exception_handler;
+            struct RUNTIME_FUNCTION chained_unwind_info;
+        };
+    };
+
+UNWIND_INFO 结构体必须在内存中以 DWORD 对齐。以下是其中字段的含义：
+
+**标志 (flags)**
+
+当前定义了三个标志： ::
+
+    UNW_FLAG_EHANDLER   函数有一个异常处理程序，在查找用于检查异常的函数时调用。
+    UNW_FLAG_UHANDLER   函数有一个终止处理程序，在展开异常时应调用。
+    UNW_FLAG_CHAININFO  这个 UNWIND_INFO 不是主要的。相反，链式展开信息条目是先前
+                        RUNTIME_FUNCTION 条目的内容。如果设置了这个标志，则必须清除
+                        UNW_FLAG_EHANDLER 和 UNW_FLAG_UHANDLER 标志。此外，帧寄存
+                        器和固定栈分配字段必须与主要展开信息中的值相同。
+
+**帧寄存器 (frame register)**
+
+如果非零，则函数使用帧指针（FP），此字段表示是哪个非易变寄存器作为帧指针使用，其值是对应
+寄存器的编号，与 UNWIND_CODE 节点中操作信息字段的编码相同。
+
+**帧寄存器偏移 (frame register offset)**
+
+如果帧寄存器字段非零，此字段是应用于 FP 寄存器的、从 RSP 开始的缩放偏移量。实际的 FP 寄
+存器设置为 RSP + 16 * 此数字，允许偏移量从 0 到 240。可以让更多的指令使用 8 位带符号的
+偏移形式。
+
+**展开代码数组 (unwind codes array)**
+
+解释起始代码对非易变寄存器和 RSP 的影响。为了对齐，该数组始终有偶数个条目，最后一个条目
+可能未使用。在这种情况下，数组比实际长度多一个元素。
+
+**异常处理程序地址 (address of exception handler)**
+
+如果清除了标志 UNW_FLAG_CHAININFO 并且设置了 UNW_FLAG_EHANDLER 或 UNW_FLAG_UHANDLER
+之一，则为特定语言异常处理或终止处理函数的映像相对地址。
+
+**特定语言的处理程序数据 (language-specific handler data)**
+
+函数的特定语言处理程序数据。这些数据的格式是未指定的，完全由所使用的特定处理程序确定。
+
+**链式展开信息 (chained unwind info)**
+
+如果设置了标志 UNW_FLAG_CHAININFO，则 UNWIND_INFO 结构体以三个 UWORD 结束。这些 UWORD
+表示链式展开的 RUNTIME_FUNCTION 信息。
+
+UNWIND_CODE 结构体用于记录起始代码中影响非易变寄存器和 RSP 的操作序列。每个代码项具有以
+下格式： ::
+
+    struct UNWIND_CODE {
+        UBYTE offset_in_prolog;
+        UBYTE unwind_opcode: 4;
+        UBYTE operation_info: 4;
+    };
+
+数组按起始代码中的偏移降序排列。其中的字段含义如下：
+
+**起始代码中的偏移 (offset in prolog)**
+
+执行此操作指令的结束位置（从起始代码开始）的偏移量加 1（即下一指令的开始位置）。
+
+**展开操作码 (unwind operation code)**
+
+注意：某些操作码需要相对局部栈帧中的值有一个无符号偏移。这个偏移从起始位置开始，即固定栈
+分配的最低地址。如果 UNWIND_INFO 中的帧寄存器字段为零，则此偏移量来自 RSP。如果帧寄存器
+字段非零，则此偏移量来自 FP 寄存器建立时 RSP 的位置。它等于 FP 寄存器减去 FP 寄存器偏移
+量（UNWIND_INFO 中缩放的帧寄存器偏移乘以 16）。如果使用了 FP 寄存器，那么任何采用偏移的
+展开代码必须只在起始代码中 FP 寄存器建立之后使用。
+
+对于所有操作码，除了 UWOP_SAVE_XMM128 和 UWOP_SAVE_XMM128_FAR，偏移总是 8 的倍数，因
+为所有感兴趣的栈值都存储在 8 字节边界上（栈本身总是 16 字节对齐的）。对于采用短偏移（小于
+512K）的操作码，此代码节点的最后一个 USHORT 包含除以 8 的偏移量。对于采用长偏移（512K <=
+偏移量 < 4GB）的操作码，此代码的最后两个 USHORT 节点包含偏移量（以小端格式）。
+
+对于操作码 UWOP_SAVE_XMM128 和 UWOP_SAVE_XMM128_FAR，偏移量总是 16 的倍数，因为所有
+128 位 XMM 操作必须在 16 字节对齐的内存上执行。因此，UWOP_SAVE_XMM128 使用了 16 的缩
+放因子，允许偏移量小于 1M。
+
+展开操作码是以下这些值之一：
+
+UWOP_PUSH_NONVOL (0)：1 个节点
+    推入一个非易变整数寄存器，RSP 减 8。操作信息是寄存器编号。由于结束代码的限制，
+    UWOP_PUSH_NONVOL 展开代码必须首先出现在起始代码中，相应地，最后出现在展开代码数组
+    中。这种相对排序适用于所有其他展开代码，除了 UWOP_PUSH_MACHFRAME。
+
+UWOP_ALLOC_LARGE (1)：2 或 3 个节点
+    在栈上分配一大块区域。有两种形式。如果操作信息等于 0，则下一项记录的是除以 8 的分配
+    大小，允许分配最大 512K - 8。如果操作信息等于 1，则下两项记录的是分配的实际大小（小
+    端格式），允许分配最大 4GB - 8。
+
+UWOP_ALLOC_SMALL (2)：1 个节点
+    在栈上分配一小块区域。分配大小是操作信息字段 * 8 + 8，允许分配从 8 到 128 字节。用
+    于栈分配的展开代码应该总是使用最短可能编码： ::
+
+        分配大小                展开代码
+        8 到 128 字节           UWOP_ALLOC_SMALL
+        136 到 512K-8 字节      UWOP_ALLOC_LARGE，操作信息为 0
+        512K 到 4G-8 字节       UWOP_ALLOC_LARGE，操作信息为 1
+
+UWOP_SET_FPREG (3)：1 个节点
+    通过设置当前 RSP 的某个偏移来建立帧指针寄存器。偏移等于 UNWIND_INFO 中的
+    frame_register_offset_scaled 字段 * 16，允许偏移从 0 到 240。使用偏移允许建立一
+    个指向固定栈分配区域中间的帧指针，允许使用更多的短指令从而可以提高代码密度。操作信息
+    字段是保留的不应使用。
+
+UWOP_SAVE_NONVOL (4)：2 个节点
+    使用 MOV 而不是 PUSH 将非易变整数寄存器保存到栈上。此代码主要用于 shrink-wrapping，
+    其中非易变寄存器保存到之前已分配的栈位置上。操作信息是寄存器编号。按 8 缩放的栈偏移
+    记录在下一个展开操作码元素中。
+
+UWOP_SAVE_NONVOL_FAR (5)：3 个节点
+    使用 MOV 而不是 PUSH 将非易变整数寄存器保存到具有长偏移的栈上。此代码主要用于
+    shrink-wrapping，其中非易变寄存器保存到之前已分配的栈位置上。操作信息是寄存器编号。
+    未缩放的堆栈偏移记录在接下来的两个展开操作码元素中。
+
+UWOP_SAVE_XMM128 (8)：2 个节点
+    将非易变 XMM 寄存器的所有 128 位保存到栈上。操作信息是寄存器编号。按 16 缩放的栈偏
+    移记录在下一项中。
+
+UWOP_SAVE_XMM128_FAR (9)：3 个节点
+    将非易变 XMM 寄存器的所有 128 位保存到具有长偏移的栈上。操作信息是寄存器编号。未缩
+    放的栈偏移记录在接下来的两项中。
+
+UWOP_PUSH_MACHFRAME (10)：1 个节点
+    推入一个机器帧。此展开代码用于记录硬件中断或异常的效果。有两种形式。如果操作信息等于
+    0，则已将以下帧入栈： ::
+
+        位置        值
+        RSP+32      SS
+        RSP+24      旧 RSP
+        RSP+16      EFLAGS
+        RSP+8       CS
+        RSP         RIP
+
+    如果操作信息等于 1，则已将以下帧入栈： ::
+
+        位置        值
+        RSP+40      SS
+        RSP+32      旧 RSP
+        RSP+24      EFLAGS
+        RSP+16      CS
+        RSP+8       RIP
+        RSP         错误代码
+
+此展开代码总是出现在一个 dummy prolog 中，该起始代码从未实际执行，而是出现在中断程序的
+实际入口点之前，仅用于提供一个地方来模拟入栈机器帧。UWOP_PUSH_MACHFRAME 记录了该模拟，
+表明机器概念上执行了此操作：
+
+1. 从栈顶弹出 RIP 返回地址到临时寄存器
+2. 推入 SS
+3. 推入旧 RSP
+4. 推入 EFLAGS
+5. 推入 CS
+6. 推入临时寄存器
+7. 推入错误代码（如果操作信息等于 1）
+
+模拟的 UWOP_PUSH_MACHFRAME 操作将 RSP 减去 40（操作信息等于 0）或 48（操作信息等于 1）。
+
+**操作信息 (operation info)**
+
+操作信息字段的意义取决于操作码。用于编码通用寄存器的映射如下： ::
+
+    0           RAX
+    1           RCX
+    2           RDX
+    3           RBX
+    4           RSP
+    5           RBP
+    6           RSI
+    7           RDI
+    8 ~ 15      R8 ~ R15
+
+如果设置了 UNW_FLAG_CHAININFO 标志，则展开信息结构是次要的，共享的异常处理程序/链式信息
+地址字段包含主要的展开信息。以下是一段示例代码，假设 unwindInfo 是设置了 UNW_FLAG_CHAININFO
+标志的结构体，这段代码检索主要的展开信息： ::
+
+    PRUNTIME_FUNCTION primaryUwindInfo = (PRUNTIME_FUNCTION)
+        &(unwindInfo->UnwindCode[(unwindInfo->CountOfCodes + 1) & ~1]);
+
+链式信息在两种情况下很有用。首先，它可以用于非连续的代码段。通过使用链式信息，可以减少所
+需的展开信息的大小，因为不需要从主要展开信息中复制展开代码数组。还可以使用链式信息来分组
+保存易变寄存器。编译器可能会延迟保存一些易变寄存器，直到它退出函数入口起始代码。可以在分
+组代码之前为函数部分设置主要展开信息来记录它们，然后设置起始代码大小不为零的链式信息，链
+式信息中的展开代码反映非易变寄存器的保存。在这种情况下，展开代码是所有 UWOP_SAVE_NONVOL
+实例。不支持通过下面的方式保存非易变寄存器的分组：使用 PUSH 保存；或通过使用额外的固定栈
+来修改 RSP 寄存器。
+
+设置了 UNW_FLAG_CHAININFO 的 UNWIND_INFO 项可以包含一个 RUNTIME_FUNCTION 入口，其
+UNWIND_INFO 项也设置了 UNW_FLAG_CHAININFO 标志，有时称为多重 shrink-wrapping。最终，
+链式展开信息指针会指向一个清除了 UNW_FLAG_CHAININFO 的 UNWIND_INFO 项。这个项是主要的
+UNWIND_INFO 项，指向实际的过程入口点。
+
+展开代码数组按降序排序。当异常发生时，操作系统会在上下文记录中存储完整上下文。然后调用异
+常分派逻辑，反复执行以下步骤以找到异常处理程序：
+
+1. 使用上下文记录中存储的当前 RIP 查找一个描述当前函数（或链式 UNWIND_INFO 条目的函数
+   部分）的 RUNTIME_FUNCTION 表条目。
+
+2. 如果没有找到函数表条目，则处于叶子函数中，RSP 直接寻址返回指针。将 [RSP] 处的返回指针
+   存储在更新的上下文中，模拟的 RSP 增加 8，然后重复步骤 1。
+
+3. 如果找到了函数表条目，RIP 可能位于三个区域之一：a) 在结束代码中，b) 在起始代码中，或
+   c) 可能处于异常处理程序覆盖的代码中。
+
+   a) 如果 RIP 在结束代码中，则控制正在离开函数，不可能有与此函数相关的异常处理程序，必
+   须继续执行结束代码的效果以计算调用方函数的上下文。要确定 RIP 是否在结束代码中，检查
+   RIP 之后的代码流。如果该代码流可以匹配到合法结束代码的后半部分，则处于结束代码中，模
+   拟结束代码的剩余部分，并随着每条指令的处理更新上下文记录。处理完成后，重复步骤 1。
+
+   b) 如果 RIP 位于起始代码中，则控制尚未进入函数，不可能有与此函数相关的异常处理程序，
+   必须撤销起始代码的效果以计算调用方函数的上下文。如果从函数起始到 RIP 的距离小于或等于
+   展开信息中编码的起始代码大小时，RIP 就在起始代码中。撤销起始代码的效果，是通过扫描展
+   开代码数组中第一个偏移小于或等于 RIP 从函数开始的偏移，然后撤销展开代码数组中所有剩余
+   项效果完成的。然后重复步骤 1。
+
+   c) 如果 RIP 不在起始代码或结束代码中，并且函数有异常处理程序（设置了 UNW_FLAG_EHANDLER），
+   则调用特定语言的处理程序。该处理程序扫描其数据并适当调用筛选函数。特定语言的处理程序
+   可以返回已处理异常或继续搜索。它也可以直接启动栈展开。
+
+4. 如果特定语言的处理程序返回已处理状态，则使用原始上下文记录继续执行。
+
+5. 如果没有特定语言的处理程序或处理程序返回继续搜索状态，则必须将上下文记录展开到调用方
+   状态。通过处理展开代码数组的所有元素，撤销每个效果来完成。然后重复步骤 1。
+
+当涉及链式展开信息时，仍然遵循这些基本步骤。唯一的区别在于，在撤销起始代码效果时遍历展开
+代码数组，一旦到达数组的末尾，它就链接到父展开信息，并且继续遍历那里找到的整个展开代码数
+组。这种链接一直持续到到达一个没有 UNW_CHAINED_INFO 标志的展开信息，然后完成遍历。
+
+最小的展开数据集是 8 字节。这表示一个只分配了 128 字节或更少栈空间的函数，并且可能保存了
+一个非易变寄存器。它也是链式展开信息结构的大小，用于没有展开代码的长度为零的起始代码。
+
+在 UNWIND_INFO 结构体中，当设置了 UNW_FLAG_EHANDLER 或 UNW_FLAG_UHANDLER 标志时，就
+会包含特定语言处理程序的相对地址。如前所述，作为寻找异常处理程序或进行展开的一部分，会调
+用特定语言处理程序。它具有以下原型： ::
+
+    typedef EXCEPTION_DISPOSITION (*PEXCEPTION_ROUTINE)(
+        IN PEXCEPTION_RECORD ExceptionRecord,
+        IN ULONG64 EstablisherFrame,
+        IN OUT PCONTEXT ContextRecord,
+        IN OUT PDISPATCHER_CONTEXT DispatcherContext);
+
+ExceptionRecord
+    提供了一个指向异常记录的指针，该记录具有标准的 Win64 定义。
+
+EstablisherFrame
+    是此函数固定栈分配的基地址。
+
+ContextRecord
+    指向在引发异常时（异常处理程序情况下）或当前展开上下文（终止处理程序情况下）的异常上
+    下文。
+
+DispatcherContext
+    指向此函数的分派上下文。它的定义如下： ::
+
+        typedef struct _DISPATCHER_CONTEXT {
+            ULONG64 ControlPc;
+            ULONG64 ImageBase;
+            PRUNTIME_FUNCTION FunctionEntry;
+            ULONG64 EstablisherFrame;
+            ULONG64 TargetIp;
+            PCONTEXT ContextRecord;
+            PEXCEPTION_ROUTINE LanguageHandler;
+            PVOID HandlerData;
+        } DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
+
+ControlPc
+    是此函数内 RIP 的值。这个值要么是异常地址，要么是控制离开建立函数的地址。RIP 用于确
+    定是否在函数内的某个受保护结构内，例如，__try/__except 或 __try/__finally 中的
+    __try 块。
+
+ImageBase
+    是包含此函数的模块的映像基地址（加载地址），需要加到函数入口和展开信息中使用的 32 位
+    偏移上，以记录相对地址。
+
+FunctionEntry
+    提供了一个指向 RUNTIME_FUNCTION 函数入口的指针，该入口保存了此函数的函数和展开信息
+    的映像相对地址。
+
+EstablisherFrame
+    是此函数固定栈分配的基地址。
+
+TargetIp
+    提供了一个可选的指令地址，来指定栈展开的继续地址。如果未指定 EstablisherFrame，则
+    忽略此地址。
+
+ContextRecord
+    指向异常上下文，供系统异常分派/展开代码使用。
+
+LanguageHandler
+    指向正在调用的特定语言处理程序例程。
+
+HandlerData
+    指向此函数的特定语言处理程序数据。
+
+以下是 C 对这些栈展开数据的定义： ::
+
+    typedef enum _UNWIND_OP_CODES {
+        UWOP_PUSH_NONVOL = 0, /* info == register number */
+        UWOP_ALLOC_LARGE,     /* no info, alloc size in next 2 slots */
+        UWOP_ALLOC_SMALL,     /* info == size of allocation / 8 - 1 */
+        UWOP_SET_FPREG,       /* no info, FP = RSP + UNWIND_INFO.FPRegOffset*16 */
+        UWOP_SAVE_NONVOL,     /* info == register number, offset in next slot */
+        UWOP_SAVE_NONVOL_FAR, /* info == register number, offset in next 2 slots */
+        UWOP_SAVE_XMM128 = 8, /* info == XMM reg number, offset in next slot */
+        UWOP_SAVE_XMM128_FAR, /* info == XMM reg number, offset in next 2 slots */
+        UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
+    } UNWIND_CODE_OPS;
+
+    typedef unsigned char UBYTE;
+
+    typedef union _UNWIND_CODE {
+        struct {
+            UBYTE CodeOffset;
+            UBYTE UnwindOp : 4;
+            UBYTE OpInfo   : 4;
+        };
+        USHORT FrameOffset;
+    } UNWIND_CODE, *PUNWIND_CODE;
+
+    #define UNW_FLAG_EHANDLER  0x01
+    #define UNW_FLAG_UHANDLER  0x02
+    #define UNW_FLAG_CHAININFO 0x04
+
+    typedef struct _UNWIND_INFO {
+        UBYTE Version       : 3;
+        UBYTE Flags         : 5;
+        UBYTE SizeOfProlog;
+        UBYTE CountOfCodes;
+        UBYTE FrameRegister : 4;
+        UBYTE FrameOffset   : 4;
+        UNWIND_CODE UnwindCode[1];
+    /*  UNWIND_CODE MoreUnwindCode[((CountOfCodes + 1) & ~1) - 1];
+    *   union {
+    *       OPTIONAL ULONG ExceptionHandler;
+    *       OPTIONAL ULONG FunctionEntry;
+    *   };
+    *   OPTIONAL ULONG ExceptionData[]; */
+    } UNWIND_INFO, *PUNWIND_INFO;
+
+    typedef struct _RUNTIME_FUNCTION {
+        ULONG BeginAddress;
+        ULONG EndAddress;
+        ULONG UnwindData;
+    } RUNTIME_FUNCTION, *PRUNTIME_FUNCTION;
+
+    #define GetUnwindCodeEntry(info, index) \
+        ((info)->UnwindCode[index])
+
+    #define GetLanguageSpecificDataPtr(info) \
+        ((PVOID)&GetUnwindCodeEntry((info),((info)->CountOfCodes + 1) & ~1))
+
+    #define GetExceptionHandler(base, info) \
+        ((PEXCEPTION_HANDLER)((base) + *(PULONG)GetLanguageSpecificDataPtr(info)))
+
+    #define GetChainedFunctionEntry(base, info) \
+        ((PRUNTIME_FUNCTION)((base) + *(PULONG)GetLanguageSpecificDataPtr(info)))
+
+    #define GetExceptionDataPtr(info) \
+        ((PVOID)((PULONG)GetLanguageSpecificData(info) + 1))
+
+MASM 栈展开
+-----------
+
+为了编写适当的汇编程序，有一组汇编命令可以与实际的汇编指令并行使用，以创建适当的 .pdata
+和 .xdata。此外，还提供了一组宏简化对这些汇编命令的使用，用于常见情况。
+
+PROC FRAME [:ehandler]
+    指示 MASM 为函数生成 .pdata 中的函数表条目和 .xdata 中的展开信息，以处理函数的结构
+    化异常处理展开行为。如果存在 ehandler，则在 .xdata 中将其作为特定语言的处理程序条目。
+    使用 FRAME 属性时，必须跟随一个 .ENDPROLOG 指令。如果函数是叶子函数，则不需要 FRAME
+    属性，也不需要使用这些汇编命令。
+
+.PUSHREG register
+    为指定的寄存器编号生成一个 UWOP_PUSH_NONVOL 展开代码条目，使用起始代码中的当前偏移
+    量。仅用于非易变整数寄存器。对于易变寄存器的推送，应使用 .ALLOCSTACK 8。
+
+.SETFRAME register, offset
+    使用指定的寄存器和偏移量填充展开信息中的帧寄存器字段和偏移量。偏移量必须是 16 的倍数，
+    且小于或等于 240。此指令还为指定寄存器生成一个 UWOP_SET_FPREG 展开代码条目，使用起
+    始代码中的当前偏移量。
+
+.ALLOCSTACK size
+    为起始代码中的当前偏移量根据指定大小生成一个 UWOP_ALLOC_SMALL 或 UWOP_ALLOC_LARGE。
+    size 操作数必须是 8 的倍数。
+
+.SAVEREG register, offset
+    为指定的寄存器和偏移量生成一个 UWOP_SAVE_NONVOL 或 UWOP_SAVE_NONVOL_FAR 展开代码
+    条目，使用起始代码中的当前偏移量。MASM 选择最有效的编码方式。offset 必须是正数，且
+    是 8 的倍数。offset 是相对于过程帧的基地址，通常在 RSP 中，或者如果使用帧指针，则为
+    未缩放的帧指针。
+
+.SAVEXMM128 register, offset
+    为指定的 XMM 寄存器和偏移量生成一个 UWOP_SAVE_XMM128 或 UWOP_SAVE_XMM128_FAR 展
+    开代码条目，使用起始代码中的当前偏移量。MASM 选择最有效的编码方式。offset 必须是正
+    数，且是 16 的倍数。offset 是相对于过程帧的基地址，通常在 RSP 中，或者如果使用帧指
+    针，则为未缩放的帧指针。
+
+.PUSHFRAME [code]
+    生成一个 UWOP_PUSH_MACHFRAME 展开代码条目。如果指定了可选的 code，则展开代码条目被
+    赋予修改符 1。否则，修改符为 0。
+
+.ENDPROLOG
+    表示起始代码声明的结束。必须出现在函数的前 255 字节内。
+
+下面是使用示例： ::
+
+    sample PROC FRAME
+        db 048h                 ; emit a REX prefix, to enable hot-patching
+        push rbp
+        .pushreg rbp
+        sub rsp, 040h
+        .allocstack 040h
+        lea rbp, [rsp+020h]
+        .setframe rbp, 020h
+        movdqa [rbp], xmm7
+        .savexmm128 xmm7, 020h  ; the offset is from the base of the frame
+                                ; not the scaled offset of the frame
+        mov [rbp+018h], rsi
+        .savereg rsi, 038h
+        mov [rsp+010h], rdi
+        .savereg rdi, 010h      ; you can still use RSP as the base of the frame
+                                ; or any other register you choose
+        .endprolog
+
+        ; you can modify the stack pointer outside of the prologue (similar to alloca)
+        ; because we have a frame pointer.
+        ; if we didn't have a frame pointer, this would be illegal
+        ; if we didn't make this modification,
+        ; there would be no need for a frame pointer
+
+        sub rsp, 060h
+
+        ; we can unwind from the next AV because of the frame pointer
+
+        mov rax, 0
+        mov rax, [rax]          ; AV!
+
+        ; restore the registers that weren't saved with a push
+        ; this isn't part of the official epilog, as described in section 2.5
+
+        movdqa xmm7, [rbp]
+        mov rsi, [rbp+018h]
+        mov rdi, [rbp-010h]
+
+        ; Here's the official epilog
+
+        lea rsp, [rbp+020h]     ; deallocate both fixed and dynamic portions of the frame
+        pop rbp
+        ret
+    sample ENDP
+
+为了简化对原始汇编命令的使用，ksamd64.inc 文件中定义了一组宏，这些宏可以用来创建典型的过程
+起始代码和结束代码。
+
+alloc_stack(n)
+    分配一个 n 字节的栈帧（使用 sub rsp, n），并生成适当的展开信息（.allocstack n）。
+
+save_reg(reg, loc)
+    将非易变寄存器 reg 保存在 RSP 偏移 loc 处的栈上，并生成适当的展开信息（.savereg
+    reg, loc）。
+
+push_reg(reg)
+    将非易变寄存器 reg 推到栈上，并生成适当的展开信息（.pushreg reg）。
+
+rex_push_reg(reg)
+    使用 2 字节的推送操作将非易变寄存器 reg 保存到栈上，并生成适当的展开信息（.pushreg
+    reg）。如果推送是函数中的第一个指令，则使用此宏以确保函数可以热修复。
+
+save_xmm128(reg, loc)
+    将非易变 XMM 寄存器 reg 保存在 RSP 偏移 loc 处的栈上，并生成适当的展开信息
+    （.savexmm128 reg, loc）。
+
+set_frame(reg, offset)
+    将帧寄存器 reg 设置为 RSP + offset（使用 mov 或 lea），并生成适当的展开信息
+    （.set_frame reg, offset）。
+
+push_eflags()
+    使用 pushfq 指令将 eflags 推到栈上，并生成适当的展开信息（.alloc_stack 8）。
+
+以下这些宏的使用示例： ::
+
+    sampleFrame struct
+        Fill     dq ?; fill to 8 mod 16
+        SavedRdi dq ?; Saved Register RDI
+        SavedRsi dq ?; Saved Register RSI
+    sampleFrame ends
+
+    sample2 PROC FRAME
+        alloc_stack(sizeof sampleFrame)
+        save_reg rdi, sampleFrame.SavedRdi
+        save_reg rsi, sampleFrame.SavedRsi
+        .end_prolog
+
+        ; function body
+
+        mov rsi, sampleFrame.SavedRsi[rsp]
+        mov rdi, sampleFrame.SavedRdi[rsp]
+
+        ; Here's the official epilog
+
+        add rsp, (sizeof sampleFrame)
+        ret
+    sample2 ENDP
