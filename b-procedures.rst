@@ -879,7 +879,12 @@ RSP，例如通过调用其他函数或为局部变量分配额外的栈空间�
 
 函数起始（prolog）和结束（epilog）代码是严格限制的，以便它们可以在 xdata 中被正确描述。
 除了叶函数外，函数起始和结束代码之间的代码区域，栈指针必须保持对齐到 16 字节边界。叶函数
-可以通过模拟返回简单的完成栈展开，因此不需要 pdata 和 xdata。
+可以通过模拟返回简单的完成栈展开，因此不需要 pdata 和 xdata。 ::
+
+    Prologs and epilogs are highly restricted so that they can be properly
+    described in xdata. The stack pointer must remain 16-byte aligned in any
+    region of code that isn't part of an epilog or prolog, except within leaf
+    functions.
 
 在 x64 体系架构上，当包含 setjmpex.h 或 setjmp.h 头文件，所有对 setjmp 或 longjmp 的
 调用将导致栈展开（unwind），这个过程会调用析构函数和 _finally 块。这种行为与 x86 体系
@@ -903,7 +908,11 @@ RSP，例如通过调用其他函数或为局部变量分配额外的栈空间�
 栈的基底，并且该寄存器必须在起始代码中保存和初始化。注意，当使用 alloca 时，从同一个调用
 者调用同一个函数可能对其寄存器参数有不同的栈影子空间地址。
 
-栈将始终保持 16 字节对齐，起始代码除外，以及某些特定类别的帧函数。
+栈将始终保持 16 字节对齐，起始代码除外，以及某些特定类别的帧函数。 ::
+
+    The stack will always be maintained 16-byte aligned, except within the
+    prolog (for example, after the return address is pushed), and except where
+    indicated in Function Types for a certain class of frame functions.
 
 以下是一个栈布局示例，其中函数 A 调用了一个非叶子函数 B。函数 A 的起始代码已经在栈底部为
 B 所需的所有寄存器和栈参数分配了空间。调用时会将返回地址推到栈上，B 的起始代码分配局部变
@@ -969,7 +978,7 @@ _alloca 要求对齐到 16 字节，并且还需要使用帧指针。分配的�
 
 典型的起始代码如下： ::
 
-    mov    [RSP + 8], RCX
+    mov    [RSP + 8], RCX   ; 当前的RSP指向函数返回地址
     push   R15
     push   R14
     push   R13
