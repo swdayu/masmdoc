@@ -344,6 +344,7 @@ TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何�
 最后，END 汇编命令表示程序的结束，并且还可以指定程序的入口点。可以在 END 之后添加更多的
 程序行，但是这些都会被汇编器忽略，因此可以在这里添加任何东西。
 
+
 定义数据
 ---------
 
@@ -372,6 +373,15 @@ TITLE 汇编命令将整行多标记为注释，可以在这一行放置任何�
     REAL4           四字节单精度浮点
     REAL8           八字节双精度浮点
     REAL10          十字节双精度扩展浮点
+
+类型声明： ::
+
+    dataDecl
+        DB | DW | DD | DF | DQ | DT | dataType | typeId
+
+    dataType
+        BYTE | SBYTE | WORD | SWORD | DWORD | SDWORD | FWORD | QWORD | SQWORD |
+        TBYTE | OWORD | REAL4 | REAL8 | REAL10 | MMWORD | XMMWORD | YMMWORD
 
 定义字符串： ::
 

@@ -232,7 +232,15 @@ LOCAL 可以命令一些列局部变量。如果使用 LOCAL，它必须立即�
 指针返回。POD（Plain Old Data）代表的是简单的旧数据，可以理解为是与 C 兼容的简单的数据
 类型，拷贝一个 POD 就拷贝了该数据的所有比特并且可以是未初始化的，C++ 里面定义了构造函数
 或虚函数的类就不是 POD 类型。POD 类型没有虚函数、基类、用户定义构造函数、拷贝构造函数、
-赋值操作符、析构函数。
+赋值操作符、析构函数。 ::
+
+    On x86 platforms, all arguments are widened to 32 bits when they are
+    passed. Return values are also widened to 32 bits and returned in the
+    EAX register, except for 8-byte structures, which are returned in the
+    EDX:EAX register pair. Larger structures are returned in the EAX register
+    as pointers to hidden return structures. Parameters are pushed onto the
+    stack from right to left. Structures that are not PODs will not be returned
+    in registers.
 
 如果在浮点协处理器上编写汇编过程，必须保护浮点控制字寄存器，并且清除掉协处理器寄存器栈，
 除非返回了一个 float 或 double 浮点值，该返回值通过 ST(0) 寄存器返回。
